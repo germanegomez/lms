@@ -6,7 +6,7 @@
 		:loading="batches.list.loading"
 		:has-next-page="batches.hasNextPage"
 		v-model:page-length="pageLength"
-		empty-name="Batches"
+		:empty-name="__('Batches')"
 		empty-icon="lucide-users"
 		@load-more="batches.next()"
 	>

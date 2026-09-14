@@ -1,9 +1,10 @@
-import { createResource } from 'frappe-ui'
+import { call } from 'frappe-ui'
+
+let translationsPromise
 
 export default function translationPlugin(app) {
 	app.config.globalProperties.__ = translate
 	window.__ = translate
-	if (!window.translatedMessages) fetchTranslations()
 }
 
 function translate(message) {
@@ -28,13 +29,24 @@ function translate(message) {
 	}
 }
 
-function fetchTranslations(lang) {
-	createResource({
-		url: 'lms.lms.api.get_translations',
-		cache: 'translations',
-		auto: true,
-		transform: (data) => {
-			window.translatedMessages = data
-		},
-	})
+export function loadTranslations() {
+	if (window.translatedMessages) {
+		return Promise.resolve(window.translatedMessages)
+	}
+	if (translationsPromise) {
+		return translationsPromise
+	}
+
+	translationsPromise = call('lms.lms.api.get_translations')
+		.then((data) => {
+			window.translatedMessages = data || {}
+			return window.translatedMessages
+		})
+		.catch((error) => {
+			console.warn('Unable to load translations; using source messages.', error)
+			window.translatedMessages = {}
+			return window.translatedMessages
+		})
+
+	return translationsPromise
 }
