@@ -1,15 +1,20 @@
-import { call } from 'frappe-ui'
+import { createResource } from 'frappe-ui'
+import { shallowRef } from 'vue'
 
-let translationsPromise
+const translatedMessages = shallowRef(window.translatedMessages || {})
 
 export default function translationPlugin(app) {
 	app.config.globalProperties.__ = translate
 	window.__ = translate
+	if (window.translatedMessages) {
+		translatedMessages.value = window.translatedMessages
+	} else {
+		fetchTranslations()
+	}
 }
 
 function translate(message) {
-	let translatedMessages = window.translatedMessages || {}
-	let translatedMessage = translatedMessages[message] || message
+	let translatedMessage = translatedMessages.value[message] || message
 
 	const hasPlaceholders = /{\d+}/.test(message)
 	if (!hasPlaceholders) {
@@ -29,24 +34,14 @@ function translate(message) {
 	}
 }
 
-export function loadTranslations() {
-	if (window.translatedMessages) {
-		return Promise.resolve(window.translatedMessages)
-	}
-	if (translationsPromise) {
-		return translationsPromise
-	}
-
-	translationsPromise = call('lms.lms.api.get_translations')
-		.then((data) => {
-			window.translatedMessages = data || {}
-			return window.translatedMessages
-		})
-		.catch((error) => {
-			console.warn('Unable to load translations; using source messages.', error)
-			window.translatedMessages = {}
-			return window.translatedMessages
-		})
-
-	return translationsPromise
+function fetchTranslations() {
+	createResource({
+		url: 'lms.lms.api.get_translations',
+		cache: 'translations',
+		auto: true,
+		transform: (data) => {
+			window.translatedMessages = data
+			translatedMessages.value = data
+		},
+	})
 }

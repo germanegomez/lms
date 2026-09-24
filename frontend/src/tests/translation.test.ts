@@ -1,49 +1,92 @@
+import { defineComponent, nextTick } from 'vue'
+import { mount, VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const call = vi.hoisted(() => vi.fn())
+const { createResource, resources } = vi.hoisted(() => ({
+	createResource: vi.fn(),
+	resources: [] as Array<{ transform: (data: Record<string, string>) => void }>,
+}))
 
-vi.mock('frappe-ui', () => ({ call }))
+vi.mock('frappe-ui', () => ({ createResource }))
+
+const Label = defineComponent({
+	template: '<span data-label>{{ __(\'Courses\') }}</span>',
+})
+
+async function mountTranslatedLabel() {
+	const { default: translationPlugin } = await import('@/translation')
+	return mount(Label, { global: { plugins: [translationPlugin] } })
+}
+
+function label(wrapper: VueWrapper) {
+	return wrapper.get('[data-label]').text()
+}
 
 beforeEach(() => {
-	call.mockReset()
+	resources.length = 0
+	createResource.mockReset().mockImplementation((options) => {
+		resources.push(options)
+		return {}
+	})
 	delete window.translatedMessages
+	delete window.__
 	vi.resetModules()
 })
 
 describe('translation startup', () => {
-	it('loads messages before callers continue bootstrapping', async () => {
-		call.mockResolvedValue({ Courses: 'Cursos' })
-		const { loadTranslations } = await import('@/translation')
+	it('renders immediately and updates a persistent label after a late response', async () => {
+		const wrapper = await mountTranslatedLabel()
 
-		await expect(loadTranslations()).resolves.toEqual({ Courses: 'Cursos' })
-		expect(window.translatedMessages).toEqual({ Courses: 'Cursos' })
-		expect(call).toHaveBeenCalledOnce()
-		expect(call).toHaveBeenCalledWith('lms.lms.api.get_translations')
-	})
-
-	it('reuses a dictionary already present on the page', async () => {
-		window.translatedMessages = { Courses: 'Cursos existentes' }
-		const { loadTranslations } = await import('@/translation')
-
-		await expect(loadTranslations()).resolves.toEqual({
-			Courses: 'Cursos existentes',
-		})
-		expect(call).not.toHaveBeenCalled()
-	})
-
-	it('falls back to source messages when the request fails', async () => {
-		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-		call.mockRejectedValue(new Error('network unavailable'))
-		const { default: translationPlugin, loadTranslations } = await import(
-			'@/translation'
+		expect(label(wrapper)).toBe('Courses')
+		expect(createResource).toHaveBeenCalledWith(
+			expect.objectContaining({
+				url: 'lms.lms.api.get_translations',
+				cache: 'translations',
+				auto: true,
+			})
 		)
 
-		await expect(loadTranslations()).resolves.toEqual({})
-		const app = { config: { globalProperties: {} } }
-		translationPlugin(app)
+		resources[0].transform({ Courses: 'Cursos' })
+		await nextTick()
 
-		expect(window.__('Courses')).toBe('Courses')
-		expect(warning).toHaveBeenCalledOnce()
-		warning.mockRestore()
+		expect(label(wrapper)).toBe('Cursos')
+	})
+
+	it('uses a cached dictionary without waiting for the network refresh', async () => {
+		createResource.mockImplementation((options) => {
+			resources.push(options)
+			options.transform({ Courses: 'Cursos guardados' })
+			return {}
+		})
+
+		const wrapper = await mountTranslatedLabel()
+
+		expect(label(wrapper)).toBe('Cursos guardados')
+	})
+
+	it('keeps rendering source labels when the translation request fails', async () => {
+		createResource.mockImplementation((options) => {
+			resources.push(options)
+			return { error: new Error('network unavailable') }
+		})
+
+		const wrapper = await mountTranslatedLabel()
+
+		expect(label(wrapper)).toBe('Courses')
+		expect(wrapper.html()).not.toBe('')
+	})
+
+	it('shares reactive translations with EditorJS sub-apps regardless of mount order', async () => {
+		const editorApp = await mountTranslatedLabel()
+		const mainApp = await mountTranslatedLabel()
+
+		expect(label(editorApp)).toBe('Courses')
+		expect(label(mainApp)).toBe('Courses')
+
+		resources[0].transform({ Courses: 'Cursos' })
+		await nextTick()
+
+		expect(label(editorApp)).toBe('Cursos')
+		expect(label(mainApp)).toBe('Cursos')
 	})
 })
